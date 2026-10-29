@@ -1,0 +1,225 @@
+import React, { useState, useEffect } from 'react'
+import {
+  WorkflowStep,
+  StartupProfile,
+  Evaluation,
+  Feedback,
+  InvestorPersona,
+  SimulationExchange
+} from './types'
+import { AppSidebar } from './components/imr/AppSidebar'
+import { AppHeader } from './components/imr/AppHeader'
+import { SplitScreenCockpit } from './components/imr/SplitScreenCockpit'
+import { ProviderSettingsModal } from './components/ProviderSettingsModal'
+import { SAMPLE_PROFILE, SAMPLE_EVALUATION } from './utils/sampleData'
+import { api } from './services/api'
+
+export default function App() {
+  const [currentStep, setCurrentStep] = useState<WorkflowStep>('upload')
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [keyConfigured, setKeyConfigured] = useState(false)
+
+  // Evaluation & Startup Context State
+  const [file, setFile] = useState<File | null>(null)
+  const [profile, setProfile] = useState<StartupProfile>({
+    name: '',
+    industry: 'B2B Software & AI',
+    stage: 'Seed',
+    fundingAmount: '$2.0M',
+    description: ''
+  })
+  const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState('')
+
+  // Simulation State
+  const [persona, setPersona] = useState<InvestorPersona>('vc')
+  const [currentQuestion, setCurrentQuestion] = useState(
+    'Your net revenue retention is 114%, but what is your customer acquisition cost payback period, and how will it scale as you expand beyond founder-led sales?'
+  )
+  const [questionTopic, setQuestionTopic] = useState('Unit Economics & CAC Payback')
+  const [questionWhy, setQuestionWhy] = useState(
+    'Series A institutional investors scrutinize CAC payback to determine if more capital will accelerate scalable, capital-efficient growth or simply fund unprofitable acquisition.'
+  )
+  const [currentFeedback, setCurrentFeedback] = useState<Feedback | null>(null)
+  const [exchanges, setExchanges] = useState<SimulationExchange[]>([])
+  const [isGeneratingQuestion, setIsGeneratingQuestion] = useState(false)
+  const [isCritiquingAnswer, setIsCritiquingAnswer] = useState(false)
+  const [practiceError, setPracticeError] = useState('')
+
+  // Check health and provider settings on mount
+  useEffect(() => {
+    async function initSettings() {
+      try {
+        const settings = await api.getProviderSettings()
+        setKeyConfigured(Boolean(settings.api_key_configured))
+      } catch {
+        // Backend may still be initializing
+      }
+    }
+    void initSettings()
+  }, [])
+
+  // Analyze Pitch Deck
+  async function handleAnalyze() {
+    if (!file) {
+      setAnalysisError('Please choose a pitch deck in PDF format first.')
+      return
+    }
+    setIsAnalyzing(true)
+    setAnalysisError('')
+    try {
+      const result = await api.evaluateDeck(file, profile)
+      setEvaluation(result)
+      setCurrentStep('review')
+    } catch (err: any) {
+      setAnalysisError(err?.message || 'Could not evaluate the pitch deck. Verify your backend or LLM connection.')
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  // Load Sample Deck (Northstar AI)
+  function handleLoadSample() {
+    setProfile(SAMPLE_PROFILE)
+    setEvaluation(SAMPLE_EVALUATION)
+    setFile(null)
+    setAnalysisError('')
+    setCurrentStep('review')
+  }
+
+  function handleQuickUpload() {
+    setCurrentStep('upload')
+  }
+
+  // Generate Simulation Question
+  async function handleGenerateQuestion(overridePersona?: InvestorPersona) {
+    const activePersona = overridePersona || persona
+    setIsGeneratingQuestion(true)
+    setPracticeError('')
+    try {
+      const deckContext = evaluation ? JSON.stringify(evaluation) : ''
+      const res = await api.getSimulationQuestion(profile, activePersona, deckContext)
+      setCurrentQuestion(res.question)
+      setQuestionTopic(res.topic)
+      setQuestionWhy(res.why_this_persona_asks)
+      setCurrentFeedback(null)
+    } catch (err: any) {
+      setPracticeError(err?.message || 'Could not generate an investor question. Check backend connection.')
+    } finally {
+      setIsGeneratingQuestion(false)
+    }
+  }
+
+  // Change Persona
+  function handleSelectPersona(newPersona: InvestorPersona) {
+    setPersona(newPersona)
+    void handleGenerateQuestion(newPersona)
+  }
+
+  // Submit Answer
+  async function handleSubmitAnswer(answer: string) {
+    if (!currentQuestion || !answer.trim()) return
+    setIsCritiquingAnswer(true)
+    setPracticeError('')
+    try {
+      const deckContext = evaluation ? JSON.stringify(evaluation) : ''
+      const feedback = await api.assessAnswer(currentQuestion, answer, persona, deckContext)
+      setCurrentFeedback(feedback)
+
+      const newExchange: SimulationExchange = {
+        id: `exch-${Date.now()}`,
+        timestamp: Date.now(),
+        persona,
+        question: currentQuestion,
+        topic: questionTopic,
+        whyThisPersonaAsks: questionWhy,
+        answer,
+        feedback
+      }
+      setExchanges((prev) => [newExchange, ...prev])
+    } catch (err: any) {
+      setPracticeError(err?.message || 'Could not evaluate your answer. Check backend connection.')
+    } finally {
+      setIsCritiquingAnswer(false)
+    }
+  }
+
+  // Reset Practice Session
+  function handleResetPracticeSession() {
+    setExchanges([])
+    setCurrentFeedback(null)
+    setPracticeError('')
+    void handleGenerateQuestion()
+  }
+
+  return (
+    <div className={`app-root ${isSidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
+      {/* Collapsible Left Navigation Sidebar */}
+      <AppSidebar
+        currentStep={currentStep}
+        onNavigate={setCurrentStep}
+        onOpenSettings={() => setSettingsOpen(true)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        hasEvaluation={Boolean(evaluation)}
+      />
+
+      <div className="app-main-frame">
+        {/* Top Header with Breadcrumbs, Stepper, and Provider Status */}
+        <AppHeader
+          currentStep={currentStep}
+          onSelectStep={setCurrentStep}
+          onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onQuickUpload={handleQuickUpload}
+          keyConfigured={keyConfigured}
+          hasEvaluation={Boolean(evaluation)}
+        />
+
+        {/* Primary Full-Height Split-Screen Workspace */}
+        <main className="cockpit-main-frame">
+          <SplitScreenCockpit
+            currentStep={currentStep}
+            onSelectStep={setCurrentStep}
+            file={file}
+            onSelectFile={setFile}
+            profile={profile}
+            onChangeProfile={setProfile}
+            evaluation={evaluation}
+            onAnalyze={handleAnalyze}
+            onLoadSample={handleLoadSample}
+            isAnalyzing={isAnalyzing}
+            error={analysisError}
+            onClearError={() => setAnalysisError('')}
+            persona={persona}
+            onSelectPersona={handleSelectPersona}
+            currentQuestion={currentQuestion}
+            questionTopic={questionTopic}
+            questionWhy={questionWhy}
+            currentFeedback={currentFeedback}
+            exchanges={exchanges}
+            isGeneratingQuestion={isGeneratingQuestion}
+            isCritiquingAnswer={isCritiquingAnswer}
+            onGenerateQuestion={() => handleGenerateQuestion()}
+            onSubmitAnswer={handleSubmitAnswer}
+            onResetPracticeSession={handleResetPracticeSession}
+          />
+        </main>
+      </div>
+
+      {/* AI Provider Settings Modal */}
+      {settingsOpen && (
+        <ProviderSettingsModal
+          onClose={() => setSettingsOpen(false)}
+          keyConfigured={keyConfigured}
+          onSettingsSaved={() => {
+            setKeyConfigured(true)
+            setSettingsOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: zth-investor-mock-room
+    runtime: docker
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: GROQ_API_KEY
+        sync: false # Set securely in Render dashboard
+      - key: FRONTEND_ORIGINS
+        value: '["*"]'
+    healthCheckPath: /api/health
